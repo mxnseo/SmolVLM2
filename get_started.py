@@ -26,6 +26,24 @@
     pip install flash-attn --no-build-isolation
 
 
+
+    -- Jetson AGX Orin 64GB --
+    (Jetpack 6.1, CUDA 12.6)
+
+    conda activate -n smolvlm python=3.10 -y
+    conda activate smolvlm
+
+    pip install torch-2.5.0-cp310-cp310-linux_aarch64.whl
+    pip install torchvision-0.20.0-cp310-cp310-linux_aarch64.whl
+
+    pip install transformers==4.51.3
+    pip install num2words
+    pip install accelerate
+    pip install av
+    pip install pillow
+    pip install "numpy<2"
+
+
 """
 
 from transformers import AutoProcessor, AutoModelForImageTextToText
@@ -49,15 +67,28 @@ def measure_inference(func):
         print(f"\n[{func.__name__}] Inference Time: {elapsed:.3f} s")
         if torch.cuda.is_available():
             print(f"VRAM: {torch.cuda.memory_allocated() / 1e9:.2f} GB")
+
+        # if result == token -> token/s time
+        if isinstance(result, tuple) and len(result) == 2:
+            actual_result, n_tokens = result
+            if isinstance(n_tokens, int):
+                print(f"Tokens: {n_tokens} | {n_tokens / elapsed:.1f} tok/s")
+            return actual_result
+
         return result
     return wrapper
+
 
 model_path = "HuggingFaceTB/SmolVLM2-2.2B-Instruct"
 processor = AutoProcessor.from_pretrained(model_path)
 model = AutoModelForImageTextToText.from_pretrained(
     model_path,
     torch_dtype=torch.bfloat16,
+    # RTX 4070 version
     _attn_implementation="flash_attention_2"
+
+    # jetson version
+    # _attn_implementation="eager"
 ).to("cuda")
 
 # ---
@@ -84,15 +115,21 @@ def simple_inference():
         return_dict=True,
         return_tensors="pt",
     ).to(model.device, dtype=torch.bfloat16)
-
+    
     generated_ids = model.generate(**inputs, do_sample=False, max_new_tokens=64)
+
+    input_len = inputs.input_ids.shape[-1]
+    n_tokens = generated_ids.shape[-1] - input_len
+    
     generated_texts = processor.batch_decode(
         generated_ids,
         skip_special_tokens=True,
     )
     print(generated_texts[0])
 
-simple_inference()
+    return generated_texts[0], n_tokens
+
+
 
 
 
@@ -120,6 +157,10 @@ def video_inference():
     ).to(model.device, dtype=torch.bfloat16)
 
     generated_ids = model.generate(**inputs, do_sample=False, max_new_tokens=64)
+    
+    input_len = inputs.input_ids.shape[-1]
+    n_tokens = generated_ids.shape[-1] - input_len
+    
     generated_texts = processor.batch_decode(
         generated_ids,
         skip_special_tokens=True,
@@ -127,7 +168,7 @@ def video_inference():
 
     print(generated_texts[0])
 
-video_inference()
+    return generated_texts[0], n_tokens
 
 
 
@@ -157,12 +198,23 @@ def multi_image_inference():
         return_dict=True,
         return_tensors="pt",
     ).to(model.device, dtype=torch.bfloat16)
-
+    
     generated_ids = model.generate(**inputs, do_sample=False, max_new_tokens=64)
+    
+    input_len = inputs.input_ids.shape[-1]
+    n_tokens = generated_ids.shape[-1] - input_len
+    
     generated_texts = processor.batch_decode(
         generated_ids,
         skip_special_tokens=True,
     )
     print(generated_texts[0])
+    
+    return generated_texts[0], n_tokens
 
-multi_image_inference()
+
+
+if __name__ == "__main__":
+    simple_inference()
+    video_inference()
+    multi_image_inference()
